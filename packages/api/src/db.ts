@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { join } from "path";
 import { mkdirSync, existsSync } from "fs";
 
@@ -8,7 +8,7 @@ if (!existsSync(dataDir)) {
   mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialize database
+// Initialize database using Bun's native SQLite
 const dbPath = process.env.DB_PATH || join(dataDir, "umbra.db");
 export const db = new Database(dbPath);
 

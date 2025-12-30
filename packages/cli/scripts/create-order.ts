@@ -10,6 +10,11 @@ import {
 } from "./utils";
 import { randomBytes } from "crypto";
 
+// Generate a valid Ethereum-style address (0x + 40 hex chars)
+function generateAddress(): string {
+  return "0x" + randomBytes(20).toString("hex");
+}
+
 async function main() {
   log("Creating OTC order...");
 
@@ -19,19 +24,26 @@ async function main() {
     process.exit(1);
   }
 
+  // Validate deployment addresses
+  if (!deployments.tokenA || !deployments.tokenB) {
+    error("Token addresses not found. Run: bun run setup:deploy --force");
+    process.exit(1);
+  }
+
   try {
     // Order parameters
     const sellAmount = 10n * 10n ** 18n;  // 10 WETH
     const buyAmount = 35000n * 10n ** 6n;  // 35,000 USDC
 
-    const sellerAddr = "0x1111...1111";
+    // Generate valid seller address
+    const sellerAddr = generateAddress();
 
-    log(`Seller: ${sellerAddr}`);
+    log(`Seller: ${shortAddress(sellerAddr)}`);
     log(`Selling: ${formatAmount(sellAmount)} WETH`);
     log(`For: ${formatAmount(buyAmount, 6)} USDC`);
 
-    // Generate mock order ID
-    const escrowAddress = "0x" + randomBytes(32).toString("hex");
+    // Generate valid escrow address for this order
+    const escrowAddress = generateAddress();
 
     // Register with orderflow service
     try {
@@ -44,12 +56,13 @@ async function main() {
           quote_token: deployments.tokenB,
           side: "SELL",
           order_type: "LIMIT",
-          expires_at: Date.now() + 3600000,
+          expires_at: Date.now() + 3600000, // 1 hour from now
         }),
       });
 
       if (!apiResponse.ok) {
-        throw new Error(`API error: ${await apiResponse.text()}`);
+        const errText = await apiResponse.text();
+        throw new Error(`API error: ${errText}`);
       }
 
       const apiData = await apiResponse.json();
@@ -60,6 +73,8 @@ async function main() {
         seller: sellerAddr,
         baseToken: deployments.tokenA,
         quoteToken: deployments.tokenB,
+        sellAmount: sellAmount.toString(),
+        buyAmount: buyAmount.toString(),
         createdAt: Date.now(),
       });
 
@@ -79,6 +94,8 @@ async function main() {
         seller: sellerAddr,
         baseToken: deployments.tokenA,
         quoteToken: deployments.tokenB,
+        sellAmount: sellAmount.toString(),
+        buyAmount: buyAmount.toString(),
         createdAt: Date.now(),
       });
 

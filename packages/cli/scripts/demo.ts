@@ -1,12 +1,26 @@
 import { spawn } from "child_process";
+import { homedir } from "os";
+import { join } from "path";
+
+const BUN_PATH = join(homedir(), ".bun", "bin", "bun");
+
+// Map script names to actual script files
+const SCRIPT_MAP: Record<string, string> = {
+  "setup:deploy": "scripts/deploy.ts",
+  "setup:mint": "scripts/mint.ts",
+  "order:create": "scripts/create-order.ts",
+  "order:fill": "scripts/fill-order.ts",
+  "balances": "scripts/balances.ts",
+};
 
 async function run(script: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const scriptFile = SCRIPT_MAP[script] || script;
     console.log(`\n${"=".repeat(60)}`);
     console.log(`Running: ${script}`);
     console.log("=".repeat(60) + "\n");
 
-    const proc = spawn("bun", ["run", script], {
+    const proc = spawn(BUN_PATH, ["run", scriptFile], {
       stdio: "inherit",
       cwd: process.cwd(),
     });

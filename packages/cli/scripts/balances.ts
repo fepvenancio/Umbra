@@ -1,8 +1,8 @@
 import {
   loadDeployments,
+  loadBalances,
   log,
   error,
-  shortAddress,
   formatAmount,
 } from "./utils";
 
@@ -20,21 +20,25 @@ async function main() {
     console.log("║                    TOKEN BALANCES                        ║");
     console.log("╠══════════════════════════════════════════════════════════╣");
 
-    // Simulated balances for 3 wallets
-    const wallets = [
-      { addr: "0x1111...1111", weth: 100n * 10n ** 18n, usdc: 350000n * 10n ** 6n },
-      { addr: "0x2222...2222", weth: 100n * 10n ** 18n, usdc: 350000n * 10n ** 6n },
-      { addr: "0x3333...3333", weth: 0n, usdc: 0n },
-    ];
+    // Load balances from storage
+    const balances = loadBalances();
 
-    for (let i = 0; i < wallets.length; i++) {
-      const wallet = wallets[i];
+    const walletAddrs = ["0x1111...1111", "0x2222...2222", "0x3333...3333"];
+    const walletKeys = ["wallet0", "wallet1", "wallet2"];
 
-      console.log(`║ Wallet ${i}: ${wallet.addr.padEnd(20)}              ║`);
-      console.log(`║   WETH: ${formatAmount(wallet.weth).padEnd(20)}             ║`);
-      console.log(`║   USDC: ${formatAmount(wallet.usdc, 6).padEnd(20)}             ║`);
+    for (let i = 0; i < walletKeys.length; i++) {
+      const key = walletKeys[i];
+      const addr = walletAddrs[i];
+      const bal = balances[key] || { weth: "0", usdc: "0" };
 
-      if (i < wallets.length - 1) {
+      const wethBal = BigInt(bal.weth);
+      const usdcBal = BigInt(bal.usdc);
+
+      console.log(`║ Wallet ${i}: ${addr.padEnd(20)}              ║`);
+      console.log(`║   WETH: ${formatAmount(wethBal).padEnd(20)}             ║`);
+      console.log(`║   USDC: ${formatAmount(usdcBal, 6).padEnd(20)}             ║`);
+
+      if (i < walletKeys.length - 1) {
         console.log("╠══════════════════════════════════════════════════════════╣");
       }
     }

@@ -87,6 +87,41 @@ export function saveOrder(id: string, data: any): void {
   writeFileSync(path, JSON.stringify(orders, null, 2));
 }
 
+// Balance storage
+interface BalanceData {
+  [wallet: string]: {
+    weth: string;
+    usdc: string;
+  };
+}
+
+export function loadBalances(): BalanceData {
+  const path = join(config.dataDir, "balances.json");
+  if (existsSync(path)) {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  }
+  // Default balances
+  return {
+    "wallet0": { weth: "100000000000000000000", usdc: "350000000000" },
+    "wallet1": { weth: "100000000000000000000", usdc: "350000000000" },
+    "wallet2": { weth: "0", usdc: "0" },
+  };
+}
+
+export function saveBalances(data: BalanceData): void {
+  const path = join(config.dataDir, "balances.json");
+  writeFileSync(path, JSON.stringify(data, null, 2));
+}
+
+export function resetBalances(): void {
+  const defaultBalances: BalanceData = {
+    "wallet0": { weth: "100000000000000000000", usdc: "350000000000" },
+    "wallet1": { weth: "100000000000000000000", usdc: "350000000000" },
+    "wallet2": { weth: "0", usdc: "0" },
+  };
+  saveBalances(defaultBalances);
+}
+
 // Logging helpers
 export function log(message: string): void {
   console.log(`[Umbra] ${message}`);

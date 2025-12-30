@@ -9,11 +9,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.0",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.8",
     "@types/uuid": "^9.0.0"
   }
 }

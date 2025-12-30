@@ -1,10 +1,13 @@
 import {
   loadDeployments,
   loadOrders,
+  loadBalances,
+  saveBalances,
   log,
   success,
   error,
   shortAddress,
+  formatAmount,
   config,
 } from "./utils";
 
@@ -39,10 +42,59 @@ async function main() {
   }
 
   try {
-    const buyerAddr = "0x2222...2222";
+    // Seller is wallet0, Buyer is wallet1
+    const sellerWallet = "wallet0";
+    const buyerWallet = "wallet1";
 
-    log(`Buyer: ${buyerAddr}`);
+    log(`Seller: 0x1111...1111 (${sellerWallet})`);
+    log(`Buyer: 0x2222...2222 (${buyerWallet})`);
     log(`Filling order: ${orderId}`);
+
+    // Get order amounts
+    const sellAmount = BigInt(order.sellAmount || "10000000000000000000"); // 10 WETH
+    const buyAmount = BigInt(order.buyAmount || "35000000000"); // 35,000 USDC
+
+    log(`Trade: ${formatAmount(sellAmount)} WETH for ${formatAmount(buyAmount, 6)} USDC`);
+
+    // Load current balances
+    const balances = loadBalances();
+
+    // Get current balances
+    const sellerWeth = BigInt(balances[sellerWallet]?.weth || "0");
+    const sellerUsdc = BigInt(balances[sellerWallet]?.usdc || "0");
+    const buyerWeth = BigInt(balances[buyerWallet]?.weth || "0");
+    const buyerUsdc = BigInt(balances[buyerWallet]?.usdc || "0");
+
+    // Validate seller has enough WETH
+    if (sellerWeth < sellAmount) {
+      error(`Seller has insufficient WETH: ${formatAmount(sellerWeth)} < ${formatAmount(sellAmount)}`);
+      process.exit(1);
+    }
+
+    // Validate buyer has enough USDC
+    if (buyerUsdc < buyAmount) {
+      error(`Buyer has insufficient USDC: ${formatAmount(buyerUsdc, 6)} < ${formatAmount(buyAmount, 6)}`);
+      process.exit(1);
+    }
+
+    // Execute the trade:
+    // - Seller sends WETH to buyer
+    // - Buyer sends USDC to seller
+    balances[sellerWallet] = {
+      weth: (sellerWeth - sellAmount).toString(),
+      usdc: (sellerUsdc + buyAmount).toString(),
+    };
+    balances[buyerWallet] = {
+      weth: (buyerWeth + sellAmount).toString(),
+      usdc: (buyerUsdc - buyAmount).toString(),
+    };
+
+    // Save updated balances
+    saveBalances(balances);
+
+    log("\n📊 Balance changes:");
+    log(`  Seller: -${formatAmount(sellAmount)} WETH, +${formatAmount(buyAmount, 6)} USDC`);
+    log(`  Buyer:  +${formatAmount(sellAmount)} WETH, -${formatAmount(buyAmount, 6)} USDC`);
 
     // Update order status in API
     try {
@@ -55,7 +107,7 @@ async function main() {
         }),
       });
     } catch (e) {
-      log("API not available, updating locally only");
+      // API not available, that's okay
     }
 
     success("Order filled!");

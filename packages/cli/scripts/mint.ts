@@ -1,5 +1,6 @@
 import {
   loadDeployments,
+  resetBalances,
   log,
   success,
   error,
@@ -17,15 +18,21 @@ async function main() {
   }
 
   try {
-    // Mint amounts (simulated)
+    // Reset balances to initial state
+    resetBalances();
+
+    // Mint amounts
     const wethAmount = 100n * 10n ** 18n;  // 100 WETH
     const usdcAmount = 350000n * 10n ** 6n; // 350,000 USDC
 
-    // Simulate minting to 2 wallets
-    for (let i = 0; i < 2; i++) {
-      const addr = `0x${(i + 1).toString(16).repeat(64).slice(0, 64)}`;
+    // Display minting to wallets
+    const wallets = [
+      { id: 0, addr: "0x1111...1111" },
+      { id: 1, addr: "0x2222...2222" },
+    ];
 
-      log(`Minting to wallet ${i}: ${shortAddress(addr)}`);
+    for (const wallet of wallets) {
+      log(`Minting to wallet ${wallet.id}: ${wallet.addr}`);
       log(`  WETH: ${formatAmount(wethAmount)}`);
       log(`  USDC: ${formatAmount(usdcAmount, 6)}`);
     }

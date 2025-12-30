@@ -310,7 +310,12 @@ pub contract UmbraEscrow {
         let current_count = storage.order_count.read();
         storage.order_count.write(current_count + 1);
 
-        // Token transfer handled in private create_order function
+        // Emit OrderCreated event
+        context.emit_public_log(OrderCreated {
+            escrow_id,
+            sell_token,
+            buy_token,
+        });
     }
 
     /// Process order fill (called from fill_order)
@@ -349,8 +354,8 @@ pub contract UmbraEscrow {
         assert(provided_buy_amount == stored_buy_amount, "Buy amount mismatch");
 
         // Verify deadline not passed
-        // In production: compare with context.block_number()
-        assert(deadline as u64 > 0, "Order expired");
+        let current_block = context.block_number();
+        assert(deadline as u64 > current_block as u64, "Order expired");
 
         // Verify buyer != seller
         assert(!buyer.eq(stored_seller), "Buyer cannot be seller");
@@ -361,6 +366,9 @@ pub contract UmbraEscrow {
         // Update total volume
         let current_volume = storage.total_volume.read();
         storage.total_volume.write(current_volume + stored_sell_amount);
+
+        // Emit OrderFilled event
+        context.emit_public_log(OrderFilled { escrow_id });
 
         // Token transfers handled in private fill_order function
     }
@@ -400,6 +408,9 @@ pub contract UmbraEscrow {
         // Decrement order count
         let current_count = storage.order_count.read();
         storage.order_count.write(current_count - 1);
+
+        // Emit OrderCancelled event
+        context.emit_public_log(OrderCancelled { escrow_id });
 
         // Token refund handled in private cancel_order function
     }

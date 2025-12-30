@@ -10,6 +10,13 @@ import {
 } from "./utils";
 import { randomBytes } from "crypto";
 
+// Consistent wallet addresses (matching balances.ts and fill-order.ts)
+const WALLETS = {
+  wallet0: "0x1111111111111111111111111111111111111111", // Seller
+  wallet1: "0x2222222222222222222222222222222222222222", // Buyer
+  wallet2: "0x3333333333333333333333333333333333333333", // Extra
+};
+
 // Generate a valid Ethereum-style address (0x + 40 hex chars)
 function generateAddress(): string {
   return "0x" + randomBytes(20).toString("hex");
@@ -35,14 +42,14 @@ async function main() {
     const sellAmount = 10n * 10n ** 18n;  // 10 WETH
     const buyAmount = 35000n * 10n ** 6n;  // 35,000 USDC
 
-    // Generate valid seller address
-    const sellerAddr = generateAddress();
+    // Seller is wallet0
+    const sellerAddr = WALLETS.wallet0;
 
-    log(`Seller: ${shortAddress(sellerAddr)}`);
+    log(`Seller: ${shortAddress(sellerAddr)} (wallet0)`);
     log(`Selling: ${formatAmount(sellAmount)} WETH`);
     log(`For: ${formatAmount(buyAmount, 6)} USDC`);
 
-    // Generate valid escrow address for this order
+    // Generate escrow address for this order
     const escrowAddress = generateAddress();
 
     // Register with orderflow service
@@ -71,6 +78,7 @@ async function main() {
       saveOrder(apiData.data.id, {
         escrowAddress,
         seller: sellerAddr,
+        sellerWallet: "wallet0",
         baseToken: deployments.tokenA,
         quoteToken: deployments.tokenB,
         sellAmount: sellAmount.toString(),
@@ -92,6 +100,7 @@ async function main() {
       saveOrder(localId, {
         escrowAddress,
         seller: sellerAddr,
+        sellerWallet: "wallet0",
         baseToken: deployments.tokenA,
         quoteToken: deployments.tokenB,
         sellAmount: sellAmount.toString(),

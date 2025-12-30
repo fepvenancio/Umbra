@@ -1,6 +1,7 @@
 use dep::aztec::macros::aztec;
 
 mod token_interface;
+mod oracle_interface;
 
 /// Umbra Pool Contract
 /// Dark pool with order matching and oracle-pegged pricing
@@ -473,8 +474,8 @@ pub contract UmbraPool {
         assert(!storage.order_exists.at(order_id).read(), "Order already exists");
 
         // Calculate expiry block
-        // In production: add to context.block_number()
-        let expires_at = expires_in_blocks; // Simplified
+        let current_block = context.block_number() as Field;
+        let expires_at = current_block + expires_in_blocks;
 
         // Store all order data
         storage.order_exists.at(order_id).write(true);
@@ -490,16 +491,25 @@ pub contract UmbraPool {
         // Increment order count
         let current_count = storage.order_count.read();
         storage.order_count.write(current_count + 1);
+
+        // Emit OrderSubmitted event
+        context.emit_public_log(OrderSubmitted {
+            order_id,
+            base_token,
+            quote_token,
+            side,
+        });
     }
 
     /// Process order match (called from match_orders)
+    /// Validates price against order limit prices
     #[public]
     #[internal]
     fn _process_match(
         buy_order_id: Field,
         sell_order_id: Field,
         match_amount: Field,
-        _oracle_price: Field,
+        provided_price: Field,
         provided_buy_owner: AztecAddress,
         provided_sell_owner: AztecAddress,
         provided_base_token: AztecAddress,
@@ -508,6 +518,26 @@ pub contract UmbraPool {
         // Verify both orders exist
         assert(storage.order_exists.at(buy_order_id).read(), "Buy order does not exist");
         assert(storage.order_exists.at(sell_order_id).read(), "Sell order does not exist");
+
+        // Get limit prices for validation
+        let buy_limit_price = storage.order_limit_price.at(buy_order_id).read();
+        let sell_limit_price = storage.order_limit_price.at(sell_order_id).read();
+
+        // Validate provided price against limit prices
+        // This ensures the price is fair for both parties
+        let price_valid = crate::oracle_interface::validate_price_range(
+            provided_price,
+            buy_limit_price,
+            sell_limit_price,
+        );
+        assert(price_valid, "Price outside acceptable range");
+
+        // Verify orders have not expired
+        let current_block = context.block_number() as Field;
+        let buy_expires = storage.order_expires_at.at(buy_order_id).read();
+        let sell_expires = storage.order_expires_at.at(sell_order_id).read();
+        assert(buy_expires as u64 > current_block as u64, "Buy order expired");
+        assert(sell_expires as u64 > current_block as u64, "Sell order expired");
 
         // Verify orders are for the same pair
         let buy_base = storage.order_base_token.at(buy_order_id).read();
@@ -559,6 +589,14 @@ pub contract UmbraPool {
 
         let current_matches = storage.total_matches.read();
         storage.total_matches.write(current_matches + 1);
+
+        // Emit OrderMatched event
+        context.emit_public_log(OrderMatched {
+            buy_order_id,
+            sell_order_id,
+            amount: match_amount,
+            price: provided_price,
+        });
     }
 
     /// Process order cancellation (called from cancel_order)
@@ -593,6 +631,9 @@ pub contract UmbraPool {
         // Decrement order count
         let current_count = storage.order_count.read();
         storage.order_count.write(current_count - 1);
+
+        // Emit OrderCancelled event
+        context.emit_public_log(OrderCancelled { order_id });
     }
 
     /// Record a match (for statistics)
@@ -717,6 +758,9 @@ pub contract UmbraPool {
             quote_token.to_field(),
         ]);
         storage.supported_pairs.at(pair_hash).write(true);
+
+        // Emit PairAdded event
+        context.emit_public_log(PairAdded { base_token, quote_token });
     }
 
     /// Remove a supported trading pair (admin only)

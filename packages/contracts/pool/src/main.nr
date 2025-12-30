@@ -143,6 +143,9 @@ pub contract UmbraPool {
     /// Submit a market order to the pool
     /// Market orders have limit_price = 0 and execute at oracle price
     ///
+    /// For BUY orders: max_quote_amount specifies the maximum quote tokens to spend
+    /// For SELL orders: amount specifies the base tokens to sell, max_quote_amount is ignored
+    ///
     /// Flow:
     /// 1. User approves token transfer to pool
     /// 2. User calls submit_market_order
@@ -154,6 +157,7 @@ pub contract UmbraPool {
         quote_token: AztecAddress,
         side: Field,
         amount: Field,
+        max_quote_amount: Field, // For buy orders: max quote to spend; for sell: ignored
         expires_in_blocks: Field,
         nonce: Field, // For auth witness
     ) -> pub Field {
@@ -173,18 +177,24 @@ pub contract UmbraPool {
             quote_token.to_field(),
             side,
             amount,
+            max_quote_amount,
             expires_in_blocks,
             randomness,
         ]);
 
         // Lock collateral based on order side
-        // Buy order: lock quote tokens
-        // Sell order: lock base tokens
+        // Buy order: lock quote tokens (max_quote_amount)
+        // Sell order: lock base tokens (amount)
         if side == SIDE_BUY {
-            // For buy orders, we lock quote tokens
-            // Amount to lock depends on oracle price (handled by matching)
-            // For now, we require the buyer to have enough quote tokens
-            // Actual transfer happens during matching
+            // SECURITY: Must lock quote tokens for buy orders
+            assert(max_quote_amount as u64 > 0, "Max quote amount required for buy orders");
+            crate::token_interface::transfer_in_private(
+                &mut context,
+                quote_token,
+                sender,
+                max_quote_amount,
+                nonce,
+            );
         } else {
             // For sell orders, lock base tokens
             crate::token_interface::transfer_in_private(
@@ -197,6 +207,7 @@ pub contract UmbraPool {
         }
 
         // Store order via internal public function
+        // For market buy orders, store max_quote_amount as a pseudo-limit price for refund calculation
         UmbraPool::at(context.this_address())._store_order(
             order_id,
             sender,
@@ -204,7 +215,7 @@ pub contract UmbraPool {
             quote_token,
             side,
             amount,
-            0, // limit_price = 0 for market orders
+            max_quote_amount, // Store max_quote for buy orders (used for refund on cancel)
             expires_in_blocks
         ).enqueue(&mut context);
 
@@ -306,6 +317,10 @@ pub contract UmbraPool {
         sell_base_token: AztecAddress,
         sell_quote_token: AztecAddress,
         sell_limit_price: Field,
+        // Fee parameters (validated against storage in public function)
+        fee_recipient: AztecAddress,
+        taker_fee_bps: Field,
+        maker_fee_bps: Field,
         // Nonces for transfers
         buy_nonce: Field,
         sell_nonce: Field,
@@ -328,13 +343,7 @@ pub contract UmbraPool {
         // quote_amount = (match_amount * oracle_price) / PRICE_PRECISION
         let quote_amount = (match_amount * oracle_price) / (PRICE_PRECISION as Field);
 
-        // Get fee info
-        let fee_recipient = context.this_address(); // Will be updated by internal function
-        let taker_fee_bps = 30; // Default, will be validated by internal function
-        let maker_fee_bps = 10; // Default, will be validated by internal function
-
-        // Calculate fees (taker = later order, maker = earlier order)
-        // For simplicity, assume buy is taker, sell is maker
+        // Calculate fees (taker = buyer, maker = seller)
         let taker_fee = (quote_amount * taker_fee_bps) / 10000;
         let maker_fee = (match_amount * maker_fee_bps) / 10000;
 
@@ -380,6 +389,7 @@ pub contract UmbraPool {
         }
 
         // Update order states via internal function
+        // Pass fee params for validation against storage
         UmbraPool::at(context.this_address())._process_match(
             buy_order_id,
             sell_order_id,
@@ -388,7 +398,10 @@ pub contract UmbraPool {
             buy_owner,
             sell_owner,
             sell_base_token,
-            sell_quote_token
+            sell_quote_token,
+            fee_recipient,
+            taker_fee_bps,
+            maker_fee_bps
         ).enqueue(&mut context);
     }
 
@@ -502,7 +515,7 @@ pub contract UmbraPool {
     }
 
     /// Process order match (called from match_orders)
-    /// Validates price against order limit prices
+    /// Validates price against order limit prices and fee parameters against storage
     #[public]
     #[internal]
     fn _process_match(
@@ -514,10 +527,21 @@ pub contract UmbraPool {
         provided_sell_owner: AztecAddress,
         provided_base_token: AztecAddress,
         provided_quote_token: AztecAddress,
+        provided_fee_recipient: AztecAddress,
+        provided_taker_fee: Field,
+        provided_maker_fee: Field,
     ) {
         // Verify both orders exist
         assert(storage.order_exists.at(buy_order_id).read(), "Buy order does not exist");
         assert(storage.order_exists.at(sell_order_id).read(), "Sell order does not exist");
+
+        // CRITICAL: Validate fee parameters match storage (prevents fee manipulation)
+        let stored_fee_recipient = storage.fee_recipient.read();
+        let stored_taker_fee = storage.taker_fee_bps.read();
+        let stored_maker_fee = storage.maker_fee_bps.read();
+        assert(provided_fee_recipient.eq(stored_fee_recipient), "Fee recipient mismatch");
+        assert(provided_taker_fee == stored_taker_fee, "Taker fee mismatch");
+        assert(provided_maker_fee == stored_maker_fee, "Maker fee mismatch");
 
         // Get limit prices for validation
         let buy_limit_price = storage.order_limit_price.at(buy_order_id).read();

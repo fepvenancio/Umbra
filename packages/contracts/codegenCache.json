@@ -1,10 +1,10 @@
 {
   "umbra_escrow-UmbraEscrow.json": {
     "contractName": "UmbraEscrow",
-    "hash": "f0b0eb66f35386db6e7de483afbd71bd3961d90150ebcf153d475cbdc6895256"
+    "hash": "45df5f482d41601e82c086fe5341a8ea147d206e03ec79c94884879e365c8421"
   },
   "umbra_pool-UmbraPool.json": {
     "contractName": "UmbraPool",
-    "hash": "0a5991e4f04937417128d93d2b8b00e29699154d846b28124dfaa7ee09599b09"
+    "hash": "ae1c2ca2f6547605a8d1a6d27aa0bb277b23dd2e47648d44a9285a525b0584e2"
   }
 }

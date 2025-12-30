@@ -256,8 +256,8 @@ supported_pairs: {
     /** is_paused() */
     is_paused: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** match_orders(buy_order_id: field, sell_order_id: field, match_amount: field, oracle_price: field, buy_owner: struct, buy_limit_price: field, sell_owner: struct, sell_base_token: struct, sell_quote_token: struct, sell_limit_price: field, buy_nonce: field, sell_nonce: field) */
-    match_orders: ((buy_order_id: FieldLike, sell_order_id: FieldLike, match_amount: FieldLike, oracle_price: FieldLike, buy_owner: AztecAddressLike, buy_limit_price: FieldLike, sell_owner: AztecAddressLike, sell_base_token: AztecAddressLike, sell_quote_token: AztecAddressLike, sell_limit_price: FieldLike, buy_nonce: FieldLike, sell_nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    /** match_orders(buy_order_id: field, sell_order_id: field, match_amount: field, oracle_price: field, buy_owner: struct, buy_limit_price: field, sell_owner: struct, sell_base_token: struct, sell_quote_token: struct, sell_limit_price: field, fee_recipient: struct, taker_fee_bps: field, maker_fee_bps: field, buy_nonce: field, sell_nonce: field) */
+    match_orders: ((buy_order_id: FieldLike, sell_order_id: FieldLike, match_amount: FieldLike, oracle_price: FieldLike, buy_owner: AztecAddressLike, buy_limit_price: FieldLike, sell_owner: AztecAddressLike, sell_base_token: AztecAddressLike, sell_quote_token: AztecAddressLike, sell_limit_price: FieldLike, fee_recipient: AztecAddressLike, taker_fee_bps: FieldLike, maker_fee_bps: FieldLike, buy_nonce: FieldLike, sell_nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** order_exists(order_id: field) */
     order_exists: ((order_id: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -289,8 +289,8 @@ supported_pairs: {
     /** submit_limit_order(base_token: struct, quote_token: struct, side: field, amount: field, limit_price: field, expires_in_blocks: field, nonce: field) */
     submit_limit_order: ((base_token: AztecAddressLike, quote_token: AztecAddressLike, side: FieldLike, amount: FieldLike, limit_price: FieldLike, expires_in_blocks: FieldLike, nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** submit_market_order(base_token: struct, quote_token: struct, side: field, amount: field, expires_in_blocks: field, nonce: field) */
-    submit_market_order: ((base_token: AztecAddressLike, quote_token: AztecAddressLike, side: FieldLike, amount: FieldLike, expires_in_blocks: FieldLike, nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    /** submit_market_order(base_token: struct, quote_token: struct, side: field, amount: field, max_quote_amount: field, expires_in_blocks: field, nonce: field) */
+    submit_market_order: ((base_token: AztecAddressLike, quote_token: AztecAddressLike, side: FieldLike, amount: FieldLike, max_quote_amount: FieldLike, expires_in_blocks: FieldLike, nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** sync_private_state() */
     sync_private_state: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

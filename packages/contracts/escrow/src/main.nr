@@ -229,6 +229,7 @@ pub contract UmbraEscrow {
         }
 
         // Call internal public function to validate order data and mark as filled
+        // Pass fee params for validation against storage
         UmbraEscrow::at(context.this_address())._process_fill(
             escrow_id,
             buyer,
@@ -236,7 +237,9 @@ pub contract UmbraEscrow {
             sell_token,
             sell_amount,
             buy_token,
-            buy_amount
+            buy_amount,
+            fee_recipient,
+            fee_bps
         ).enqueue(&mut context);
     }
 
@@ -331,12 +334,20 @@ pub contract UmbraEscrow {
         provided_sell_amount: Field,
         provided_buy_token: AztecAddress,
         provided_buy_amount: Field,
+        provided_fee_recipient: AztecAddress,
+        provided_fee_bps: Field,
     ) {
         // Verify order exists
         assert(storage.order_exists.at(escrow_id).read(), "Order does not exist");
 
         // Verify not already filled
         assert(!storage.order_filled.at(escrow_id).read(), "Order already filled");
+
+        // CRITICAL: Validate fee parameters match storage (prevents fee bypass attack)
+        let stored_fee_recipient = storage.fee_recipient.read();
+        let stored_fee_bps = storage.fee_bps.read();
+        assert(provided_fee_recipient.eq(stored_fee_recipient), "Fee recipient mismatch");
+        assert(provided_fee_bps == stored_fee_bps, "Fee bps mismatch");
 
         // Get stored order data
         let stored_seller = storage.order_seller.at(escrow_id).read();

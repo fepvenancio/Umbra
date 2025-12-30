@@ -1,0 +1,15 @@
+{
+  "name": "@umbra/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "aztec-nargo compile && aztec codegen ./target -o ./ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@aztec/aztec.js": "^0.84.0",
+    "@aztec/accounts": "^0.84.0",
+    "@types/bun": "latest"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "umbra-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "bun run build:contracts && bun run build:api",
+    "build:contracts": "cd packages/contracts && aztec-nargo compile && aztec codegen ./target -o ./ts",
+    "test": "bun run test:contracts && bun run test:api",
+    "test:contracts": "cd packages/contracts && bun test",
+    "test:api": "cd packages/api && bun test",
+    "sandbox": "aztec start --sandbox",
+    "api": "cd packages/api && bun run start",
+    "demo": "cd packages/cli && bun run demo"
+  }
+}

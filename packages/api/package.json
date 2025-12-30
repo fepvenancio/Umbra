@@ -1,0 +1,19 @@
+{
+  "name": "@umbra/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/uuid": "^9.0.0"
+  }
+}

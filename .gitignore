@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/
+target/
+artifacts/
+*.db
+.DS_Store

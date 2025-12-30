@@ -1,6 +1,6 @@
 # Umbra Protocol - Production Readiness Assessment
 
-## Current Status: 8.5/10 (Testnet Ready)
+## Current Status: 9/10 (Testnet Ready)
 
 This document tracks the security fixes and production readiness of Umbra Protocol.
 
@@ -85,6 +85,17 @@ Previously used non-standard function signatures that wouldn't work with AIP-20 
 FunctionSelector::from_signature("transfer_private_to_private((Field),(Field),u128,Field)")
 ```
 
+### 8. Oracle Removal - Midpoint Pricing ✅
+**Status:** Fixed
+**File:** `pool/main.nr`
+
+Removed unnecessary oracle dependency. Orders now match using midpoint pricing:
+- Both limit orders: execution price = (buy_limit + sell_limit) / 2
+- One market order: execution price = counterparty's limit
+- Both market orders: not allowed (requires at least one limit)
+
+This simplifies the architecture and removes external dependency/manipulation risk.
+
 ---
 
 ## Security Features
@@ -94,7 +105,6 @@ FunctionSelector::from_signature("transfer_private_to_private((Field),(Field),u1
 |----------|------------|-----------|
 | `set_fee` | Admin only | ✅ |
 | `set_fee_recipient` | Admin only | ✅ |
-| `set_oracle` | Admin only | ✅ |
 | `set_taker_fee` | Admin only | ✅ |
 | `set_maker_fee` | Admin only | ✅ |
 | `add_pair` | Admin only | ✅ |
@@ -115,7 +125,6 @@ FunctionSelector::from_signature("transfer_private_to_private((Field),(Field),u1
 ### Configurable Values (Admin Only)
 - `fee_bps` / `taker_fee_bps` / `maker_fee_bps`
 - `fee_recipient`
-- `oracle` address
 - `supported_pairs` (add/remove)
 - `paused` state
 
@@ -142,10 +151,11 @@ This means the "transfer-before-validate" pattern is safe in Aztec's model.
 
 ### For Testnet (Current State)
 - ✅ Contracts compile and pass tests (38 tests passing)
-- ✅ Security vulnerabilities fixed (7 issues addressed)
+- ✅ Security vulnerabilities fixed (8 issues addressed)
 - ✅ Admin controls in place
 - ✅ Fee caps enforced (max 100 bps / 1%)
 - ✅ AIP-20 token standard compliant
+- ✅ Oracle removed - midpoint pricing
 - ⚠️ CLI is simulation-only (not real contract interaction yet)
 
 ### For Mainnet (Future Work)
@@ -154,7 +164,6 @@ This means the "transfer-before-validate" pattern is safe in Aztec's model.
 | Formal audit | Critical | Pending |
 | Token interface verification | High | ✅ AIP-20 Compliant |
 | Integration tests with sandbox | High | Pending |
-| Real oracle integration | Medium | Simplified |
 | Reentrancy guards | Low | N/A (Aztec model) |
 | Order cleanup mechanism | Low | Pending |
 
@@ -196,6 +205,7 @@ cd packages/cli
 - AIP-20 compliant token interface
 - Fee validation (prevents bypass attacks)
 - Buy order collateral requirement
+- Midpoint pricing (no oracle dependency)
 
 ### Aztec Standards Evaluation
 We evaluated [Aztec Standards](https://github.com/defi-wonderland/aztec-standards) from defi-wonderland:

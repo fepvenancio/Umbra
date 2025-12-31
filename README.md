@@ -1,31 +1,52 @@
 # Umbra Protocol
 
-Privacy-native dark pool on Aztec Network.
+A dark pool for Aztec Network.
 
-## What is Umbra?
+## Overview
 
-Umbra enables private OTC trades on Aztec Network:
+Umbra enables OTC trading on Aztec with atomic settlement and oracle-based pricing.
 
-- **Private Orders** - Order details encrypted with ZK proofs
-- **Atomic Settlement** - All-or-nothing trades, no counterparty risk
-- **Oracle Pricing** - Fair execution at oracle price (no price revelation)
-- **Partial Fills** - Large orders fill incrementally
+**Three contracts:**
+- **UmbraEscrow** — Bilateral OTC trades between two parties
+- **UmbraPool** — Order book with automatic matching at oracle prices
+- **SimpleOracle** — Price feed for the pool (testnet only)
 
-## Architecture
+## How It Works
 
+### Escrow Flow
 ```
-Traders -> PXE (client-side ZK proofs) -> Smart Contracts -> Aztec Network
-
-Contracts:
-- UmbraEscrow: P2P OTC trades with escrow
-- UmbraPool: Dark pool with automatic matching
-- SimpleOracle: Admin-controlled price feed (testnet)
+1. Seller creates order, locks tokens
+2. Buyer fills order at agreed price
+3. Tokens swap atomically — no counterparty risk
 ```
+
+### Pool Flow
+```
+1. Traders submit buy/sell orders with collateral
+2. Keeper matches compatible orders at oracle price
+3. Tokens transfer atomically, fees collected
+```
+
+## Privacy Model
+
+Umbra runs on Aztec, a ZK rollup. Here's what that means:
+
+**Private (hidden from observers):**
+- Token balances — stored as encrypted notes
+- Transfer amounts — ZK proofs verify without revealing
+- Transaction sender — private function callers are hidden
+
+**Public (visible on-chain):**
+- Order metadata — tokens, amounts, owner, limits
+- Order status — filled, cancelled, partial fills
+- Protocol config — fees, admin, oracle address
+
+Orders are public by design. A matcher must read orders to pair them. The privacy comes from Aztec's token layer — your balances and transfers stay hidden.
 
 ## Quick Start
 
 ```bash
-# Install
+# Install dependencies
 bun install
 
 # Compile contracts
@@ -34,7 +55,7 @@ cd packages/contracts && ~/.aztec/bin/aztec-nargo compile
 # Run tests
 bun test
 
-# Start API
+# Start API server
 cd packages/api && bun run start
 ```
 
@@ -44,50 +65,51 @@ cd packages/api && bun run start
 umbra/
 ├── packages/
 │   ├── contracts/     # Noir smart contracts
-│   │   ├── escrow/    # OTC escrow contract
-│   │   ├── pool/      # Dark pool contract
-│   │   └── oracle/    # Price oracle contract
+│   │   ├── escrow/    # OTC escrow
+│   │   ├── pool/      # Dark pool
+│   │   └── oracle/    # Price feed
 │   ├── api/           # Orderflow REST API
-│   └── cli/           # CLI tools and demo
+│   └── cli/           # CLI tools
 └── docs/              # Documentation
 ```
 
 ## Contracts
 
 ### UmbraEscrow
-P2P OTC trades with:
-- Order creation with token escrow
-- Atomic fill with fee collection
-- Cancellation with refund
-- Admin controls (pause, fee management)
+
+Bilateral OTC escrow:
+- Create order with token lockup
+- Fill atomically with fee collection
+- Cancel and reclaim tokens
+- Admin controls: pause, fees, token whitelist
 
 ### UmbraPool
-Dark pool order book with:
-- Market and limit orders
-- Automatic order matching
-- Oracle-based pricing (true dark pool)
-- Partial fills
+
+Order book with matching:
+- Market orders (execute at oracle price)
+- Limit orders (price constraints)
+- Partial fills with accurate tracking
 - Trading pair whitelist
 
 ### SimpleOracle
-Admin-controlled price feed for testnet:
+
+Admin-controlled price feed:
 - Set prices per trading pair
-- Staleness checking
-- For mainnet: replace with L1->L2 Chainlink bridge
+- Staleness validation
+- Testnet only — mainnet uses L1 oracle bridge
 
-## Configuration
+## Fees
 
-| Parameter | Default | Range |
-|-----------|---------|-------|
-| Taker Fee | 30 bps | 0-100 bps |
-| Maker Fee | 10 bps | 0-100 bps |
-| Max Fee | 100 bps (1%) | - |
+| Parameter | Default | Max |
+|-----------|---------|-----|
+| Taker Fee | 30 bps | 100 bps |
+| Maker Fee | 10 bps | 100 bps |
 
 ## Status
 
-**Testnet Ready** - Contracts compile and pass tests.
+**Testnet Ready** — Contracts compile and pass tests.
 
-See [docs/FIXES.md](docs/FIXES.md) for security assessment.
+See [docs/FIXES.md](docs/FIXES.md) for security details.
 
 ## License
 

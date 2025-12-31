@@ -1,77 +1,38 @@
 # CLAUDE.md - Umbra Protocol Build Guide
 
-## PERSONA
-
-You are **ShadowForge**, an elite ZK protocol architect specializing in Aztec Network development. You have deep expertise in:
-
-- **Noir** - Aztec's Rust-like ZK language
-- **Aztec.nr** - The private smart contract framework
-- **Aztec.js** - TypeScript SDK for Aztec interactions
-- **Zero-Knowledge Proofs** - PLONK, private state management, nullifiers
-- **DeFi Protocol Design** - AMMs, orderbooks, matching engines, escrows
-- **Privacy-Preserving Systems** - Private notes, encrypted state, viewing keys
-
-You are building **Umbra Protocol** - the first production-grade dark pool on Aztec Network.
-
----
-
 ## PROJECT OVERVIEW
 
-### What We're Building
+**Umbra Protocol** is a dark pool for Aztec Network. It enables OTC trading with atomic settlement and oracle-based pricing.
 
-**Umbra Protocol** is a privacy-native dark pool for Aztec Network that enables:
-- Private OTC trades with no information leakage
-- Hidden order books with encrypted intents
-- Atomic settlement with ZK proofs
-- Midpoint execution pegged to oracle prices
-- Institutional compliance via viewing keys
+### Contracts
 
-### Why "Umbra"
+- **UmbraEscrow** — Bilateral OTC trades between two parties
+- **UmbraPool** — Order book with automatic matching at oracle prices
+- **SimpleOracle** — Price feed for the pool (testnet only)
 
-Umbra (Latin for "shadow") represents the darkest part of a shadow - perfect for a dark pool. It's also short, memorable, and available.
-
-### Architecture Overview
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        UMBRA PROTOCOL                               │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐             │
-│  │   TRADER    │    │   TRADER    │    │   TRADER    │             │
-│  │   (Buyer)   │    │  (Seller)   │    │   (Maker)   │             │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘             │
-│         │                  │                  │                     │
-│         ▼                  ▼                  ▼                     │
+│  Traders                                                            │
+│     │                                                               │
+│     ▼                                                               │
 │  ┌──────────────────────────────────────────────────────────┐      │
 │  │                    PXE (Client-Side)                     │      │
 │  │  - Generate ZK proofs locally                            │      │
-│  │  - Encrypt order details                                 │      │
-│  │  - Manage private notes                                  │      │
+│  │  - Manage private token notes                            │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                             │                                       │
 │                             ▼                                       │
 │  ┌──────────────────────────────────────────────────────────┐      │
-│  │                 UMBRA SMART CONTRACTS                    │      │
+│  │                 UMBRA CONTRACTS                          │      │
 │  │                                                          │      │
-│  │  ┌─────────────────┐  ┌─────────────────┐               │      │
-│  │  │  UmbraVault     │  │  UmbraEscrow    │               │      │
-│  │  │  (Deposits)     │  │  (OTC Trades)   │               │      │
-│  │  └─────────────────┘  └─────────────────┘               │      │
+│  │  UmbraEscrow     UmbraPool       SimpleOracle           │      │
+│  │  (OTC Trades)    (Dark Pool)     (Price Feed)           │      │
 │  │                                                          │      │
-│  │  ┌─────────────────┐  ┌─────────────────┐               │      │
-│  │  │  UmbraPool      │  │  UmbraOracle    │               │      │
-│  │  │  (Dark Pool)    │  │  (Price Feed)   │               │      │
-│  │  └─────────────────┘  └─────────────────┘               │      │
-│  │                                                          │      │
-│  └──────────────────────────────────────────────────────────┘      │
-│                             │                                       │
-│                             ▼                                       │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │                 ORDERFLOW SERVICE                        │      │
-│  │  - REST API for order discovery                          │      │
-│  │  - Encrypted order matching                              │      │
-│  │  - Trade coordination                                    │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                             │                                       │
 │                             ▼                                       │
@@ -79,7 +40,6 @@ Umbra (Latin for "shadow") represents the darkest part of a shadow - perfect for
 │  │                  AZTEC NETWORK                           │      │
 │  │  - Private state trees                                   │      │
 │  │  - ZK rollup to Ethereum                                 │      │
-│  │  - Decentralized sequencers                              │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -89,166 +49,89 @@ Umbra (Latin for "shadow") represents the darkest part of a shadow - perfect for
 
 ## BUILD SEQUENCE
 
-Follow these files in order:
-
-1. **`docs/00-SETUP.md`** - Environment setup and tooling
-2. **`docs/01-CONTRACTS.md`** - Noir smart contract development
-3. **`docs/02-ESCROW.md`** - OTC escrow contract implementation
-4. **`docs/03-POOL.md`** - Dark pool matching engine
-5. **`docs/04-ORDERFLOW.md`** - Orderflow service API
-6. **`docs/05-CLI.md`** - CLI demo and testing
-7. **`docs/06-FRONTEND.md`** - Web interface (optional)
-8. **`docs/07-DEPLOY.md`** - Testnet deployment
+1. **`docs/00-SETUP.md`** — Environment setup
+2. Compile and test contracts
+3. Start orderflow API
+4. Run CLI demo
 
 ---
 
-## CRITICAL TECHNICAL CONTEXT
+## AZTEC TECHNICAL CONTEXT
 
-### Aztec Private State Model
+### Private State Model
 
-Aztec uses a **UTXO-like model** for private state:
+Aztec uses a UTXO-like model for private state. A "note" is encrypted data only the owner can decrypt.
+
+When you spend a note:
+1. Create a **nullifier** — proves note is spent without revealing which
+2. Create new note(s) with updated values
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    PRIVATE STATE (Notes)                            │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  A "note" is an encrypted piece of data that only the owner can    │
-│  decrypt and spend. When you "spend" a note, you:                  │
-│                                                                     │
-│  1. Create a NULLIFIER (proves note is spent, prevents double-     │
-│     spending, but doesn't reveal which note was spent)             │
-│                                                                     │
-│  2. Create new NOTE(s) with updated values                         │
-│                                                                     │
-│  Example: Transfer 100 tokens from Alice to Bob                    │
-│                                                                     │
-│  BEFORE:                                                           │
-│  ┌────────────────────────────────────────┐                        │
-│  │ Alice's Note: value=100, owner=Alice  │                        │
-│  └────────────────────────────────────────┘                        │
-│                                                                     │
-│  AFTER:                                                            │
-│  ┌────────────────────────────────────────┐                        │
-│  │ Nullifier: hash(Alice's Note)          │ (proves spent)        │
-│  └────────────────────────────────────────┘                        │
-│  ┌────────────────────────────────────────┐                        │
-│  │ Bob's Note: value=100, owner=Bob       │ (new note created)    │
-│  └────────────────────────────────────────┘                        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+Example: Transfer 100 tokens from Alice to Bob
+
+BEFORE:
+┌────────────────────────────────────────┐
+│ Alice's Note: value=100, owner=Alice  │
+└────────────────────────────────────────┘
+
+AFTER:
+┌────────────────────────────────────────┐
+│ Nullifier: hash(Alice's Note)          │  ← proves spent
+└────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Bob's Note: value=100, owner=Bob       │  ← new note
+└────────────────────────────────────────┘
 ```
 
-### Function Types in Aztec
+### Function Types
 
 ```noir
-// PRIVATE function - executed client-side, generates ZK proof
+// PRIVATE — executed client-side, generates ZK proof
 #[private]
 fn transfer(to: AztecAddress, amount: u64) {
-    // Only the caller can see inputs/outputs
-    // Proof is submitted to network
+    // Only caller sees inputs/outputs
 }
 
-// PUBLIC function - executed by sequencers, visible to all
+// PUBLIC — executed by sequencers, visible to all
 #[public]
 fn update_price(new_price: u64) {
-    // Everyone can see this execution
+    // Everyone sees this
 }
 
-// PRIVATE calling PUBLIC (allowed)
-#[private]
-fn deposit(amount: u64) {
-    // Do private stuff...
-    context.call_public_function(
-        self.address,
-        compute_selector("finalize_deposit"),
-        [amount]
-    );
-}
-
-// PUBLIC calling PRIVATE (NOT allowed - would leak private data)
+// PRIVATE calling PUBLIC — allowed
+// PUBLIC calling PRIVATE — not allowed (would leak data)
 ```
 
-### Key Aztec Patterns
+### Storage Patterns
 
 ```noir
-// 1. STORAGE - Define state variables
 #[storage]
 struct Storage {
-    admin: PrivateImmutable<AztecAddress>,
-    balances: Map<AztecAddress, PrivateSet<ValueNote>>,
-    total_supply: PublicMutable<U128>,
+    admin: PublicImmutable<AztecAddress>,     // Set once, visible
+    balances: Map<AztecAddress, PrivateSet<ValueNote>>,  // Encrypted
+    total_supply: PublicMutable<U128>,        // Visible, mutable
 }
-
-// 2. NOTES - Custom private data structures
-#[note]
-struct OrderNote {
-    owner: AztecAddress,
-    sell_token: AztecAddress,
-    sell_amount: u64,
-    buy_token: AztecAddress,
-    buy_amount: u64,
-    nonce: Field,
-}
-
-// 3. EMITTING ENCRYPTED NOTES
-storage.balances.at(to).insert(&mut note).emit(
-    encode_and_encrypt_note(&mut context, to, from)
-);
-
-// 4. CONSUMING NOTES (with nullifier)
-let note = storage.balances.at(from).pop_notes(
-    NoteGetterOptions::new().set_limit(1)
-)[0];
-// Note is automatically nullified when popped
 ```
 
 ---
 
-## REFERENCE IMPLEMENTATION
+## PRIVACY MODEL
 
-We are forking and extending the **aztec-pioneers/aztec-otc-desk** prototype:
+**Private (hidden from observers):**
+- Token balances — stored as encrypted notes in AIP-20 contracts
+- Transfer amounts — ZK proofs verify without revealing
+- Transaction sender — private function callers are hidden
 
-```bash
-# The prototype structure
-aztec-otc-desk/
-├── packages/
-│   ├── contracts/           # Noir contracts
-│   │   ├── src/
-│   │   │   ├── main.nr     # OTC Escrow Contract
-│   │   │   └── types/      # Custom notes
-│   │   └── ts/             # TypeScript bindings
-│   ├── cli/                # CLI demo
-│   └── api/                # Orderflow service
-└── deps/
-    └── aztec-standards/    # Standard library
-```
+**Public (visible on-chain):**
+- Order metadata — tokens, amounts, owner, limits, deadlines
+- Order status — filled, cancelled, partial fill amounts
+- Protocol config — fees, admin, oracle address
 
-**Key files to study:**
-- `packages/contracts/src/main.nr` - Core escrow logic
-- `packages/api/src/index.ts` - Orderflow API
-- `packages/cli/scripts/` - Demo workflows
+Orders are public by design. A matcher must read orders to pair them. The privacy comes from Aztec's token layer — balances and transfers stay hidden.
 
 ---
 
-## IMPROVEMENTS OVER PROTOTYPE
-
-The prototype is a **proof of concept**. We're building **production-grade** by adding:
-
-| Feature | Prototype | Umbra |
-|---------|-----------|-------|
-| Matching | Manual fill | Automatic matching engine |
-| Pricing | Fixed price | Oracle-pegged midpoint |
-| Orders | Single escrow | Order book with priorities |
-| Compliance | None | Viewing keys for auditors |
-| Liquidity | P2P only | Market makers + P2P |
-| UI | CLI only | CLI + Web interface |
-| Fees | None | Protocol fees |
-| Tokens | Any | Whitelisted + any |
-
----
-
-## BUILD COMMANDS REFERENCE
+## BUILD COMMANDS
 
 ```bash
 # Environment setup
@@ -259,103 +142,72 @@ aztec start --sandbox            # Start local sandbox
 cd packages/contracts
 aztec-nargo compile              # Compile Noir contracts
 aztec-nargo test                 # Run Noir tests
-bun run build                    # Build with TypeScript bindings
 
 # Testing
 bun test                         # Run all tests
-bun run test:nr                  # Noir TXE tests only
 
 # Orderflow service
 cd packages/api
 bun run dev                      # Start dev server
-bun test                         # API tests
 
 # CLI demo
 cd packages/cli
-bun run setup:deploy             # Deploy contracts
-bun run order:create             # Create order
-bun run order:fill               # Fill order
-bun run balances                 # Check balances
+bun run scripts/demo.ts          # Run demo
 ```
 
 ---
 
-## ERROR HANDLING PATTERNS
-
-When you encounter errors, follow this decision tree:
+## ERROR HANDLING
 
 ```
-ERROR TYPE                         SOLUTION
-────────────────────────────────────────────────────────────────
+ERROR                              SOLUTION
+─────────────────────────────────────────────────────────────
 "Cannot find module"              → Check Nargo.toml dependencies
-                                  → Verify git tag matches sandbox version
                                   → Run `aztec-up` to update
 
 "Note not found"                  → PXE not synced
-                                  → Wrong account registered
                                   → Note already nullified
 
-"Proof generation failed"         → Circuit too complex (simplify)
+"Proof generation failed"         → Circuit too complex
                                   → Invalid witness
-                                  → Memory limit (increase Node memory)
 
 "Transaction reverted"            → Check public function logic
-                                  → Verify storage access patterns
-                                  → Check msg.sender permissions
+                                  → Verify storage access
 
 "PXE connection refused"          → Start sandbox: `aztec start --sandbox`
-                                  → Check port (default 8080)
 
-"Sandbox not ready"               → Wait for "Cannot enqueue vote cast..."
-                                  → Docker not running
-                                  → Port conflict
+"Sandbox not ready"               → Wait for ready message
+                                  → Check Docker is running
 ```
 
 ---
 
 ## SUCCESS CRITERIA
 
-The build is complete when:
-
-1. ✅ **Contracts compile** - `aztec-nargo compile` succeeds
-2. ✅ **Tests pass** - All Noir and TS tests green
-3. ✅ **Escrow works** - Can create and fill OTC orders privately
-4. ✅ **Pool works** - Multiple orders match automatically
-5. ✅ **API works** - REST endpoints for order management
-6. ✅ **CLI works** - Full demo workflow executable
-7. ✅ **Deployed** - Running on Aztec testnet
+1. `aztec-nargo compile` succeeds
+2. `bun test` passes
+3. Escrow: create and fill orders
+4. Pool: orders match automatically
+5. API: serves orderflow requests
+6. CLI: demo runs end-to-end
 
 ---
 
-## IMPORTANT WARNINGS
+## WARNINGS
 
-⚠️ **VERSION COMPATIBILITY**
-- Aztec is rapidly evolving. Pin all versions.
-- Current stable: `v1.2.0` (check docs for latest)
-- Noir contracts MUST match sandbox version
+**VERSION COMPATIBILITY**
+- Aztec evolves rapidly. Pin versions.
+- Noir contracts must match sandbox version.
 
-⚠️ **PRIVATE vs PUBLIC**
+**PRIVATE vs PUBLIC**
 - Never leak private data in public functions
 - Private → Public calls OK
-- Public → Private calls IMPOSSIBLE
+- Public → Private calls impossible
 
-⚠️ **NOTE MANAGEMENT**
+**NOTE MANAGEMENT**
 - Notes are consumed when read (UTXO model)
-- Always handle change notes
-- PXE must be synced to see notes
+- PXE must sync to see notes
 
-⚠️ **DOCKER REQUIREMENTS**
+**DOCKER**
 - Sandbox runs in Docker
 - Ensure Docker has 8GB+ memory
-- Check Docker is running before `aztec start`
-
----
-
-## NEXT STEPS
-
-1. Read `docs/00-SETUP.md` to set up your environment
-2. Follow each doc in sequence
-3. Test after each major step
-4. Deploy to testnet when all tests pass
-
-**LFG! 🚀**

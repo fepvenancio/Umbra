@@ -85,16 +85,28 @@ Previously used non-standard function signatures that wouldn't work with AIP-20 
 FunctionSelector::from_signature("transfer_private_to_private((Field),(Field),u128,Field)")
 ```
 
-### 8. Oracle Removal - Midpoint Pricing ✅
+### 8. Oracle-Based Dark Pool Pricing ✅
 **Status:** Fixed
-**File:** `pool/main.nr`
+**Files:** `pool/main.nr`, `oracle/main.nr` (new)
 
-Removed unnecessary oracle dependency. Orders now match using midpoint pricing:
-- Both limit orders: execution price = (buy_limit + sell_limit) / 2
-- One market order: execution price = counterparty's limit
-- Both market orders: not allowed (requires at least one limit)
+Implemented proper dark pool pricing with admin-controlled oracle:
+- Created `SimpleOracle` contract for testnet price feeds
+- Orders execute at oracle price (true dark pool behavior)
+- Limit orders validated against oracle price
+- Market orders (limit = 0) accept any oracle price
 
-This simplifies the architecture and removes external dependency/manipulation risk.
+```noir
+// Dark pool matching - users don't reveal price preferences
+// Oracle price is provided by matcher, validated in contract
+if buy_limit_price > 0 {
+    assert(oracle_price <= buy_limit_price, "Price exceeds buy limit");
+}
+if sell_limit_price > 0 {
+    assert(oracle_price >= sell_limit_price, "Price below sell limit");
+}
+```
+
+For mainnet: Replace SimpleOracle with L1->L2 Chainlink/Pyth bridge.
 
 ---
 
@@ -105,12 +117,14 @@ This simplifies the architecture and removes external dependency/manipulation ri
 |----------|------------|-----------|
 | `set_fee` | Admin only | ✅ |
 | `set_fee_recipient` | Admin only | ✅ |
+| `set_oracle` | Admin only | ✅ |
 | `set_taker_fee` | Admin only | ✅ |
 | `set_maker_fee` | Admin only | ✅ |
 | `add_pair` | Admin only | ✅ |
 | `remove_pair` | Admin only | ✅ |
 | `pause` | Admin only | ✅ |
 | `unpause` | Admin only | ✅ |
+| `set_price` (Oracle) | Admin only | ✅ |
 
 ### Fee Caps
 | Contract | Max Fee | Enforced |
@@ -125,8 +139,10 @@ This simplifies the architecture and removes external dependency/manipulation ri
 ### Configurable Values (Admin Only)
 - `fee_bps` / `taker_fee_bps` / `maker_fee_bps`
 - `fee_recipient`
+- `oracle` address
 - `supported_pairs` (add/remove)
 - `paused` state
+- `prices` (via SimpleOracle contract)
 
 ---
 
@@ -155,13 +171,15 @@ This means the "transfer-before-validate" pattern is safe in Aztec's model.
 - ✅ Admin controls in place
 - ✅ Fee caps enforced (max 100 bps / 1%)
 - ✅ AIP-20 token standard compliant
-- ✅ Oracle removed - midpoint pricing
+- ✅ Oracle-based dark pool pricing
+- ✅ SimpleOracle contract for testnet
 - ⚠️ CLI is simulation-only (not real contract interaction yet)
 
 ### For Mainnet (Future Work)
 | Item | Priority | Status |
 |------|----------|--------|
 | Formal audit | Critical | Pending |
+| L1->L2 Oracle Bridge | High | Pending (Chainlink/Pyth) |
 | Token interface verification | High | ✅ AIP-20 Compliant |
 | Integration tests with sandbox | High | Pending |
 | Reentrancy guards | Low | N/A (Aztec model) |
@@ -205,7 +223,7 @@ cd packages/cli
 - AIP-20 compliant token interface
 - Fee validation (prevents bypass attacks)
 - Buy order collateral requirement
-- Midpoint pricing (no oracle dependency)
+- Oracle-based dark pool pricing (SimpleOracle for testnet)
 
 ### Aztec Standards Evaluation
 We evaluated [Aztec Standards](https://github.com/defi-wonderland/aztec-standards) from defi-wonderland:

@@ -160,6 +160,7 @@ describe("UmbraPool Contract Artifact", () => {
       expect(functionNames).toContain("is_pair_supported");
 
       // Admin functions
+      expect(functionNames).toContain("set_oracle");
       expect(functionNames).toContain("set_taker_fee");
       expect(functionNames).toContain("set_maker_fee");
       expect(functionNames).toContain("pause");
@@ -167,6 +168,7 @@ describe("UmbraPool Contract Artifact", () => {
 
       // View functions
       expect(functionNames).toContain("get_admin");
+      expect(functionNames).toContain("get_oracle");
       expect(functionNames).toContain("get_order_count");
       expect(functionNames).toContain("get_total_volume");
       expect(functionNames).toContain("get_total_matches");

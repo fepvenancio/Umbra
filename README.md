@@ -8,7 +8,7 @@ Umbra enables private OTC trades on Aztec Network:
 
 - **Private Orders** - Order details encrypted with ZK proofs
 - **Atomic Settlement** - All-or-nothing trades, no counterparty risk
-- **Midpoint Pricing** - Fair execution at midpoint of limit prices
+- **Oracle Pricing** - Fair execution at oracle price (no price revelation)
 - **Partial Fills** - Large orders fill incrementally
 
 ## Architecture
@@ -18,7 +18,8 @@ Traders -> PXE (client-side ZK proofs) -> Smart Contracts -> Aztec Network
 
 Contracts:
 - UmbraEscrow: P2P OTC trades with escrow
-- UmbraPool: Order book with automatic matching
+- UmbraPool: Dark pool with automatic matching
+- SimpleOracle: Admin-controlled price feed (testnet)
 ```
 
 ## Quick Start
@@ -44,7 +45,8 @@ umbra/
 ├── packages/
 │   ├── contracts/     # Noir smart contracts
 │   │   ├── escrow/    # OTC escrow contract
-│   │   └── pool/      # Dark pool contract
+│   │   ├── pool/      # Dark pool contract
+│   │   └── oracle/    # Price oracle contract
 │   ├── api/           # Orderflow REST API
 │   └── cli/           # CLI tools and demo
 └── docs/              # Documentation
@@ -63,9 +65,15 @@ P2P OTC trades with:
 Dark pool order book with:
 - Market and limit orders
 - Automatic order matching
-- Midpoint pricing (no oracle needed)
+- Oracle-based pricing (true dark pool)
 - Partial fills
 - Trading pair whitelist
+
+### SimpleOracle
+Admin-controlled price feed for testnet:
+- Set prices per trading pair
+- Staleness checking
+- For mainnet: replace with L1->L2 Chainlink bridge
 
 ## Configuration
 

@@ -3,7 +3,7 @@ use dep::aztec::macros::aztec;
 mod token_interface;
 
 /// Umbra Pool Contract
-/// Dark pool with order matching and midpoint pricing
+/// Dark pool with order matching and oracle-based pricing
 ///
 /// Security features:
 /// - Admin-only configuration management
@@ -72,6 +72,8 @@ pub contract UmbraPool {
     struct Storage<Context> {
         /// Contract admin (immutable after initialization)
         admin: PublicImmutable<AztecAddress, Context>,
+        /// Oracle contract address for price feeds
+        oracle: PublicMutable<AztecAddress, Context>,
         /// Fee configuration
         fee_recipient: PublicMutable<AztecAddress, Context>,
         taker_fee_bps: PublicMutable<Field, Context>,
@@ -115,6 +117,7 @@ pub contract UmbraPool {
     #[initializer]
     fn constructor(
         admin: AztecAddress,
+        oracle: AztecAddress,
         fee_recipient: AztecAddress,
         taker_fee_bps: Field,
         maker_fee_bps: Field,
@@ -124,6 +127,7 @@ pub contract UmbraPool {
         assert(maker_fee_bps as u64 <= MAX_FEE_BPS, "Maker fee exceeds maximum");
 
         storage.admin.initialize(admin);
+        storage.oracle.write(oracle);
         storage.fee_recipient.write(fee_recipient);
         storage.taker_fee_bps.write(taker_fee_bps);
         storage.maker_fee_bps.write(maker_fee_bps);
@@ -136,7 +140,7 @@ pub contract UmbraPool {
     // ==================== PRIVATE FUNCTIONS ====================
 
     /// Submit a market order to the pool
-    /// Market orders have limit_price = 0 and execute at counterparty's limit price
+    /// Market orders have limit_price = 0 and execute at oracle price
     ///
     /// For BUY orders: max_quote_amount specifies the maximum quote tokens to spend
     /// For SELL orders: amount specifies the base tokens to sell, max_quote_amount is ignored
@@ -292,21 +296,21 @@ pub contract UmbraPool {
     /// Match two orders (buy and sell)
     /// Called by a matcher/keeper to execute a trade
     ///
-    /// Pricing: Executes at midpoint of buy and sell limit prices
-    /// - Both limits set: price = (buy_limit + sell_limit) / 2
-    /// - One market order: price = counterparty's limit price
-    /// - Both market orders: not allowed (at least one must have limit)
+    /// Dark Pool Pricing: Executes at oracle price
+    /// - Matcher provides oracle_price from SimpleOracle contract
+    /// - Validates against limit orders (buy_limit >= oracle >= sell_limit)
+    /// - Market orders (limit = 0) accept any oracle price
     ///
     /// Flow:
-    /// 1. Verify orders can match (buy_limit >= sell_limit)
-    /// 2. Calculate execution price (midpoint)
-    /// 3. Execute token transfers
-    /// 4. Update order states and statistics
+    /// 1. Validate oracle price against limit orders
+    /// 2. Execute token transfers at oracle price
+    /// 3. Update order states and statistics
     #[private]
     fn match_orders(
         buy_order_id: Field,
         sell_order_id: Field,
         match_amount: Field,
+        oracle_price: Field,  // Price from oracle, provided by matcher
         // Order data for buy order (caller must provide, validated by internal function)
         buy_owner: AztecAddress,
         buy_limit_price: Field,
@@ -323,28 +327,23 @@ pub contract UmbraPool {
         buy_nonce: Field,
         sell_nonce: Field,
     ) {
-        // Verify match amount is positive
+        // Verify match amount and oracle price are positive
         assert(match_amount as u64 > 0, "Match amount must be positive");
+        assert(oracle_price as u64 > 0, "Oracle price must be positive");
 
-        // Calculate execution price (midpoint pricing)
-        // At least one order must have a limit price
-        let execution_price = if (buy_limit_price as u64 > 0) & (sell_limit_price as u64 > 0) {
-            // Both have limits: verify they cross and use midpoint
-            assert(buy_limit_price as u64 >= sell_limit_price as u64, "Orders do not cross");
-            (buy_limit_price + sell_limit_price) / 2
-        } else if buy_limit_price as u64 > 0 {
-            // Sell is market order: use buy's limit
-            buy_limit_price
-        } else if sell_limit_price as u64 > 0 {
-            // Buy is market order: use sell's limit
-            sell_limit_price
-        } else {
-            // Both are market orders: cannot determine price
-            assert(false, "At least one order must have a limit price");
-            0 // unreachable
-        };
+        // Validate oracle price against limit orders
+        // Buy limit: oracle_price <= buy_limit (buyer won't pay more than limit)
+        // Sell limit: oracle_price >= sell_limit (seller won't accept less than limit)
+        // Limit of 0 = market order (accepts any price)
+        if buy_limit_price as u64 > 0 {
+            assert(oracle_price as u64 <= buy_limit_price as u64, "Oracle price exceeds buy limit");
+        }
+        if sell_limit_price as u64 > 0 {
+            assert(oracle_price as u64 >= sell_limit_price as u64, "Oracle price below sell limit");
+        }
 
-        assert(execution_price as u64 > 0, "Execution price must be positive");
+        // Execute at oracle price
+        let execution_price = oracle_price;
 
         // Calculate quote amount at execution price
         // quote_amount = (match_amount * execution_price) / PRICE_PRECISION
@@ -560,16 +559,15 @@ pub contract UmbraPool {
         assert(provided_buy_limit == buy_limit_price, "Buy limit price mismatch");
         assert(provided_sell_limit == sell_limit_price, "Sell limit price mismatch");
 
-        // Validate execution price is correct midpoint
-        // Recalculate to ensure private function didn't manipulate
-        let expected_price = if (buy_limit_price as u64 > 0) & (sell_limit_price as u64 > 0) {
-            (buy_limit_price + sell_limit_price) / 2
-        } else if buy_limit_price as u64 > 0 {
-            buy_limit_price
-        } else {
-            sell_limit_price
-        };
-        assert(execution_price == expected_price, "Invalid execution price");
+        // Validate oracle price against limit orders
+        // Oracle price must be acceptable to both parties
+        assert(execution_price as u64 > 0, "Execution price must be positive");
+        if buy_limit_price as u64 > 0 {
+            assert(execution_price as u64 <= buy_limit_price as u64, "Oracle price exceeds buy limit");
+        }
+        if sell_limit_price as u64 > 0 {
+            assert(execution_price as u64 >= sell_limit_price as u64, "Oracle price below sell limit");
+        }
 
         // Verify orders have not expired
         let current_block = context.block_number() as Field;
@@ -694,6 +692,12 @@ pub contract UmbraPool {
         storage.admin.read()
     }
 
+    /// Get the oracle contract address
+    #[public]
+    fn get_oracle() -> pub AztecAddress {
+        storage.oracle.read()
+    }
+
     /// Check if contract is paused
     #[public]
     fn is_paused() -> pub bool {
@@ -809,6 +813,16 @@ pub contract UmbraPool {
             quote_token.to_field(),
         ]);
         storage.supported_pairs.at(pair_hash).write(false);
+    }
+
+    /// Update oracle contract address (admin only)
+    #[public]
+    fn set_oracle(new_oracle: AztecAddress) {
+        let caller = context.msg_sender();
+        let admin = storage.admin.read();
+        assert(caller.eq(admin), "Only admin can set oracle");
+
+        storage.oracle.write(new_oracle);
     }
 
     /// Update taker fee (admin only)

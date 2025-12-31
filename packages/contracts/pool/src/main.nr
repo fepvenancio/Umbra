@@ -84,6 +84,10 @@ pub contract UmbraPool {
         order_count: PublicMutable<Field, Context>,
         /// Emergency pause state
         paused: PublicMutable<bool, Context>,
+        /// Maximum oracle price age in blocks (0 = no check)
+        max_oracle_age_blocks: PublicMutable<Field, Context>,
+        /// Reentrancy guard for critical operations
+        reentrancy_guard: PublicMutable<bool, Context>,
 
         // ==================== ORDER STORAGE MAPS ====================
         /// Track if order ID exists
@@ -102,6 +106,8 @@ pub contract UmbraPool {
         order_filled_amount: Map<Field, PublicMutable<Field, Context>, Context>,
         /// Limit price (0 for market orders)
         order_limit_price: Map<Field, PublicMutable<Field, Context>, Context>,
+        /// Locked quote amount for buy orders (for accurate refunds)
+        order_locked_quote: Map<Field, PublicMutable<Field, Context>, Context>,
         /// Block number when order expires
         order_expires_at: Map<Field, PublicMutable<Field, Context>, Context>,
 
@@ -121,6 +127,7 @@ pub contract UmbraPool {
         fee_recipient: AztecAddress,
         taker_fee_bps: Field,
         maker_fee_bps: Field,
+        max_oracle_age_blocks: Field,
     ) {
         // Validate fees don't exceed maximum
         assert(taker_fee_bps as u64 <= MAX_FEE_BPS, "Taker fee exceeds maximum");
@@ -131,6 +138,8 @@ pub contract UmbraPool {
         storage.fee_recipient.write(fee_recipient);
         storage.taker_fee_bps.write(taker_fee_bps);
         storage.maker_fee_bps.write(maker_fee_bps);
+        storage.max_oracle_age_blocks.write(max_oracle_age_blocks);
+        storage.reentrancy_guard.write(false);
         storage.total_volume.write(0);
         storage.total_matches.write(0);
         storage.order_count.write(0);
@@ -206,7 +215,8 @@ pub contract UmbraPool {
         }
 
         // Store order via internal public function
-        // For market buy orders, store max_quote_amount as a pseudo-limit price for refund calculation
+        // For market orders, limit_price = 0, but we track locked_quote for refunds
+        let locked_quote = if side == SIDE_BUY { max_quote_amount } else { 0 };
         UmbraPool::at(context.this_address())._store_order(
             order_id,
             sender,
@@ -214,7 +224,8 @@ pub contract UmbraPool {
             quote_token,
             side,
             amount,
-            max_quote_amount, // Store max_quote for buy orders (used for refund on cancel)
+            0,  // Market orders have limit_price = 0
+            locked_quote,
             expires_in_blocks
         ).enqueue(&mut context);
 
@@ -279,6 +290,12 @@ pub contract UmbraPool {
         }
 
         // Store order via internal public function
+        // For limit buy orders, locked_quote = calculated quote amount
+        let locked_quote = if side == SIDE_BUY {
+            (amount * limit_price) / (PRICE_PRECISION as Field)
+        } else {
+            0  // Sell orders lock base tokens, not quote
+        };
         UmbraPool::at(context.this_address())._store_order(
             order_id,
             sender,
@@ -287,6 +304,7 @@ pub contract UmbraPool {
             side,
             amount,
             limit_price,
+            locked_quote,
             expires_in_blocks
         ).enqueue(&mut context);
 
@@ -311,6 +329,7 @@ pub contract UmbraPool {
         sell_order_id: Field,
         match_amount: Field,
         oracle_price: Field,  // Price from oracle, provided by matcher
+        oracle_updated_at: Field,  // Block when oracle price was last updated
         // Order data for buy order (caller must provide, validated by internal function)
         buy_owner: AztecAddress,
         buy_limit_price: Field,
@@ -323,9 +342,8 @@ pub contract UmbraPool {
         fee_recipient: AztecAddress,
         taker_fee_bps: Field,
         maker_fee_bps: Field,
-        // Nonces for transfers
-        buy_nonce: Field,
-        sell_nonce: Field,
+        // Note: No user nonces required - pool owns tokens after order submission
+        // Pool generates its own nonces for transfers (Solidity-like pattern)
     ) {
         // Verify match amount and oracle price are positive
         assert(match_amount as u64 > 0, "Match amount must be positive");
@@ -354,34 +372,44 @@ pub contract UmbraPool {
         let maker_fee = (match_amount * maker_fee_bps) / 10000;
 
         // Execute transfers:
-        // 1. Quote tokens: buyer -> seller (minus taker fee)
-        crate::token_interface::transfer_private(
+        // All transfers are FROM pool (tokens were locked during order submission)
+        // Pool generates its own nonces - no user authwit needed (Solidity-like pattern)
+        //
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let nonce1 = unsafe { random() };
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let nonce2 = unsafe { random() };
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let nonce3 = unsafe { random() };
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let nonce4 = unsafe { random() };
+
+        // 1. Quote tokens: pool -> seller (buyer's locked quote)
+        crate::token_interface::transfer_out_private(
             &mut context,
             sell_quote_token,
-            buy_owner,
             sell_owner,
             quote_amount - taker_fee,
-            buy_nonce,
+            nonce1,
         );
 
-        // 2. Base tokens: pool (seller's locked) -> buyer (minus maker fee)
+        // 2. Base tokens: pool -> buyer (seller's locked base)
         crate::token_interface::transfer_out_private(
             &mut context,
             sell_base_token,
             buy_owner,
             match_amount - maker_fee,
-            sell_nonce,
+            nonce2,
         );
 
-        // 3. Fees to fee_recipient
+        // 3. Fees from pool to fee_recipient
         if taker_fee as u64 > 0 {
-            crate::token_interface::transfer_private(
+            crate::token_interface::transfer_out_private(
                 &mut context,
                 sell_quote_token,
-                buy_owner,
                 fee_recipient,
                 taker_fee,
-                buy_nonce + 1,
+                nonce3,
             );
         }
         if maker_fee as u64 > 0 {
@@ -390,7 +418,7 @@ pub contract UmbraPool {
                 sell_base_token,
                 fee_recipient,
                 maker_fee,
-                sell_nonce + 1,
+                nonce4,
             );
         }
 
@@ -401,6 +429,7 @@ pub contract UmbraPool {
             sell_order_id,
             match_amount,
             execution_price,
+            oracle_updated_at,
             buy_owner,
             sell_owner,
             sell_base_token,
@@ -415,6 +444,7 @@ pub contract UmbraPool {
 
     /// Cancel an active order
     /// Returns escrowed tokens to the owner
+    /// Note: No nonce needed - pool owns tokens and generates its own nonce
     #[private]
     fn cancel_order(
         order_id: Field,
@@ -423,36 +453,38 @@ pub contract UmbraPool {
         side: Field,
         amount: Field,
         filled_amount: Field,
-        limit_price: Field,
-        nonce: Field,
+        locked_quote: Field,  // For buy orders: remaining quote tokens to refund
+        // Note: No nonce needed - pool owns tokens (Solidity-like pattern)
     ) {
         let sender = context.msg_sender();
 
-        // Calculate remaining amount
+        // Calculate remaining base amount
         let remaining_amount = amount - filled_amount;
         assert(remaining_amount as u64 > 0, "No amount to cancel");
 
+        // Pool generates its own nonce for refund (Solidity-like pattern)
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let refund_nonce = unsafe { random() };
+
         // Return locked tokens
         if side == SIDE_BUY {
-            // Return quote tokens
-            if limit_price as u64 > 0 {
-                let quote_to_return = (remaining_amount * limit_price) / (PRICE_PRECISION as Field);
-                crate::token_interface::transfer_out_private(
-                    &mut context,
-                    quote_token,
-                    sender,
-                    quote_to_return,
-                    nonce,
-                );
-            }
+            // Return remaining quote tokens (tracked in locked_quote storage)
+            assert(locked_quote as u64 > 0, "No quote tokens to return");
+            crate::token_interface::transfer_out_private(
+                &mut context,
+                quote_token,
+                sender,
+                locked_quote,
+                refund_nonce,
+            );
         } else {
-            // Return base tokens
+            // Return remaining base tokens
             crate::token_interface::transfer_out_private(
                 &mut context,
                 base_token,
                 sender,
                 remaining_amount,
-                nonce,
+                refund_nonce,
             );
         }
 
@@ -462,7 +494,8 @@ pub contract UmbraPool {
             sender,
             side,
             amount,
-            filled_amount
+            filled_amount,
+            locked_quote
         ).enqueue(&mut context);
     }
 
@@ -479,8 +512,13 @@ pub contract UmbraPool {
         side: Field,
         amount: Field,
         limit_price: Field,
+        locked_quote: Field,  // For buy orders: actual quote amount locked
         expires_in_blocks: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Check not paused
         assert(!storage.paused.read(), "Contract is paused");
 
@@ -507,6 +545,7 @@ pub contract UmbraPool {
         storage.order_amount.at(order_id).write(amount);
         storage.order_filled_amount.at(order_id).write(0);
         storage.order_limit_price.at(order_id).write(limit_price);
+        storage.order_locked_quote.at(order_id).write(locked_quote);
         storage.order_expires_at.at(order_id).write(expires_at);
 
         // Increment order count
@@ -520,10 +559,13 @@ pub contract UmbraPool {
             quote_token,
             side,
         });
+
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     /// Process order match (called from match_orders)
-    /// Validates execution price and fee parameters against storage
+    /// Validates execution price, oracle staleness, and fee parameters against storage
     #[public]
     #[internal]
     fn _process_match(
@@ -531,6 +573,7 @@ pub contract UmbraPool {
         sell_order_id: Field,
         match_amount: Field,
         execution_price: Field,
+        oracle_updated_at: Field,
         provided_buy_owner: AztecAddress,
         provided_sell_owner: AztecAddress,
         provided_base_token: AztecAddress,
@@ -541,6 +584,10 @@ pub contract UmbraPool {
         provided_taker_fee: Field,
         provided_maker_fee: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Verify both orders exist
         assert(storage.order_exists.at(buy_order_id).read(), "Buy order does not exist");
         assert(storage.order_exists.at(sell_order_id).read(), "Sell order does not exist");
@@ -552,6 +599,14 @@ pub contract UmbraPool {
         assert(provided_fee_recipient.eq(stored_fee_recipient), "Fee recipient mismatch");
         assert(provided_taker_fee == stored_taker_fee, "Taker fee mismatch");
         assert(provided_maker_fee == stored_maker_fee, "Maker fee mismatch");
+
+        // Validate oracle price is not stale (if max_oracle_age_blocks > 0)
+        let max_age = storage.max_oracle_age_blocks.read();
+        if max_age as u64 > 0 {
+            let current_block = context.block_number() as Field;
+            let price_age = current_block - oracle_updated_at;
+            assert(price_age as u64 <= max_age as u64, "Oracle price is stale");
+        }
 
         // Validate provided limit prices match stored values
         let buy_limit_price = storage.order_limit_price.at(buy_order_id).read();
@@ -612,6 +667,12 @@ pub contract UmbraPool {
         storage.order_filled_amount.at(buy_order_id).write(buy_filled + match_amount);
         storage.order_filled_amount.at(sell_order_id).write(sell_filled + match_amount);
 
+        // Update buy order locked_quote (for accurate refunds on partial fill + cancel)
+        // quote_spent = (match_amount * execution_price) / PRICE_PRECISION
+        let quote_spent = (match_amount * execution_price) / (PRICE_PRECISION as Field);
+        let current_locked = storage.order_locked_quote.at(buy_order_id).read();
+        storage.order_locked_quote.at(buy_order_id).write(current_locked - quote_spent);
+
         // Mark fully filled orders as non-existent
         if (buy_filled + match_amount) == buy_amount {
             storage.order_exists.at(buy_order_id).write(false);
@@ -634,6 +695,9 @@ pub contract UmbraPool {
             amount: match_amount,
             price: execution_price,
         });
+
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     /// Process order cancellation (called from cancel_order)
@@ -645,7 +709,12 @@ pub contract UmbraPool {
         provided_side: Field,
         provided_amount: Field,
         provided_filled: Field,
+        provided_locked_quote: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Verify order exists
         assert(storage.order_exists.at(order_id).read(), "Order does not exist");
 
@@ -657,20 +726,26 @@ pub contract UmbraPool {
         let stored_side = storage.order_side.at(order_id).read();
         let stored_amount = storage.order_amount.at(order_id).read();
         let stored_filled = storage.order_filled_amount.at(order_id).read();
+        let stored_locked_quote = storage.order_locked_quote.at(order_id).read();
 
         assert(provided_side == stored_side, "Side mismatch");
         assert(provided_amount == stored_amount, "Amount mismatch");
         assert(provided_filled == stored_filled, "Filled amount mismatch");
+        assert(provided_locked_quote == stored_locked_quote, "Locked quote mismatch");
 
         // Mark order as non-existent
         storage.order_exists.at(order_id).write(false);
 
-        // Decrement order count
+        // Decrement order count (with underflow check)
         let current_count = storage.order_count.read();
+        assert(current_count as u64 > 0, "No orders to decrement");
         storage.order_count.write(current_count - 1);
 
         // Emit OrderCancelled event
         context.emit_public_log(OrderCancelled { order_id });
+
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     /// Record a match (for statistics)
@@ -855,6 +930,23 @@ pub contract UmbraPool {
         assert(caller.eq(admin), "Only admin can set fee recipient");
 
         storage.fee_recipient.write(new_recipient);
+    }
+
+    /// Update max oracle age (admin only)
+    /// Set to 0 to disable staleness check
+    #[public]
+    fn set_max_oracle_age(new_max_age: Field) {
+        let caller = context.msg_sender();
+        let admin = storage.admin.read();
+        assert(caller.eq(admin), "Only admin can set max oracle age");
+
+        storage.max_oracle_age_blocks.write(new_max_age);
+    }
+
+    /// Get max oracle age in blocks
+    #[public]
+    fn get_max_oracle_age() -> pub Field {
+        storage.max_oracle_age_blocks.read()
     }
 
     /// Pause the contract (admin only)

@@ -17,8 +17,7 @@ db.exec(`
   -- Orders table (metadata only, no sensitive data)
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
-    escrow_address TEXT NOT NULL,
-    pool_address TEXT,
+    contract_address TEXT NOT NULL,  -- Pool or Escrow contract address
     base_token TEXT NOT NULL,
     quote_token TEXT NOT NULL,
     side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
@@ -27,8 +26,7 @@ db.exec(`
     fill_percentage INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    UNIQUE(escrow_address)
+    updated_at INTEGER NOT NULL
   );
 
   -- Supported trading pairs
@@ -58,13 +56,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
   CREATE INDEX IF NOT EXISTS idx_orders_pair ON orders(base_token, quote_token);
   CREATE INDEX IF NOT EXISTS idx_orders_expires ON orders(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_orders_contract ON orders(contract_address);
 `);
 
 // Helper types
 export interface Order {
   id: string;
-  escrow_address: string;
-  pool_address?: string;
+  contract_address: string;  // Pool or Escrow contract address
   base_token: string;
   quote_token: string;
   side: "BUY" | "SELL";
@@ -89,16 +87,16 @@ export interface Pair {
 export const statements = {
   // Orders
   insertOrder: db.prepare(`
-    INSERT INTO orders (id, escrow_address, pool_address, base_token, quote_token, side, order_type, status, fill_percentage, created_at, expires_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (id, contract_address, base_token, quote_token, side, order_type, status, fill_percentage, created_at, expires_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
 
   getOrder: db.prepare(`
     SELECT * FROM orders WHERE id = ?
   `),
 
-  getOrderByEscrow: db.prepare(`
-    SELECT * FROM orders WHERE escrow_address = ?
+  getOrdersByContract: db.prepare(`
+    SELECT * FROM orders WHERE contract_address = ? ORDER BY created_at DESC
   `),
 
   listOrders: db.prepare(`

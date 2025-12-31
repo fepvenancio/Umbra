@@ -64,6 +64,10 @@ pub contract UmbraEscrow {
         order_count: PublicMutable<Field, Context>,
         /// Total volume (public for stats)
         total_volume: PublicMutable<Field, Context>,
+        /// Reentrancy guard
+        reentrancy_guard: PublicMutable<bool, Context>,
+        /// Supported tokens: token_address => supported
+        supported_tokens: Map<Field, PublicMutable<bool, Context>, Context>,
 
         // ==================== ORDER STORAGE MAPS ====================
         /// Track if order ID exists
@@ -97,6 +101,7 @@ pub contract UmbraEscrow {
         storage.fee_recipient.write(fee_recipient);
         storage.fee_bps.write(fee_bps);
         storage.paused.write(false);
+        storage.reentrancy_guard.write(false);
         storage.order_count.write(0);
         storage.total_volume.write(0);
     }
@@ -198,15 +203,21 @@ pub contract UmbraEscrow {
         let fee = (sell_amount * fee_bps) / 10000;
         let amount_after_fee = sell_amount - fee;
 
-        // Transfer buy_token from buyer to seller
+        // Transfer buy_token from buyer to seller (uses buyer's authwit)
         crate::token_interface::transfer_private(
             &mut context,
             buy_token,
             buyer,
             seller,
             buy_amount,
-            nonce,
+            nonce,  // User's single nonce (Solidity-like: one approval needed)
         );
+
+        // Escrow owns sell_token - generates its own nonces for these transfers
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let escrow_nonce1 = unsafe { random() };
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let escrow_nonce2 = unsafe { random() };
 
         // Transfer sell_token from escrow to buyer (minus fee)
         crate::token_interface::transfer_out_private(
@@ -214,7 +225,7 @@ pub contract UmbraEscrow {
             sell_token,
             buyer,
             amount_after_fee,
-            nonce + 1, // Different nonce for second transfer
+            escrow_nonce1,  // Escrow-generated nonce
         );
 
         // Transfer fee to fee_recipient (if fee > 0)
@@ -224,7 +235,7 @@ pub contract UmbraEscrow {
                 sell_token,
                 fee_recipient,
                 fee,
-                nonce + 2, // Different nonce for third transfer
+                escrow_nonce2,  // Escrow-generated nonce
             );
         }
 
@@ -257,9 +268,13 @@ pub contract UmbraEscrow {
         escrow_id: Field,
         sell_token: AztecAddress,
         sell_amount: Field,
-        nonce: Field, // Nonce for transfer
+        // Note: No nonce needed - escrow owns tokens and generates its own nonce
     ) {
         let sender = context.msg_sender();
+
+        // Escrow generates its own nonce for refund (Solidity-like pattern)
+        // Safety: random() used for nonce uniqueness, not security-critical
+        let refund_nonce = unsafe { random() };
 
         // Transfer sell_token back to seller
         crate::token_interface::transfer_out_private(
@@ -267,7 +282,7 @@ pub contract UmbraEscrow {
             sell_token,
             sender,
             sell_amount,
-            nonce,
+            refund_nonce,
         );
 
         // Call internal public function to validate and process cancellation
@@ -293,8 +308,16 @@ pub contract UmbraEscrow {
         buy_amount: Field,
         deadline: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Check not paused
         assert(!storage.paused.read(), "Contract is paused");
+
+        // Verify tokens are supported
+        assert(storage.supported_tokens.at(sell_token.to_field()).read(), "Sell token not supported");
+        assert(storage.supported_tokens.at(buy_token.to_field()).read(), "Buy token not supported");
 
         // Verify order doesn't already exist
         assert(!storage.order_exists.at(escrow_id).read(), "Order already exists");
@@ -319,6 +342,9 @@ pub contract UmbraEscrow {
             sell_token,
             buy_token,
         });
+
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     /// Process order fill (called from fill_order)
@@ -337,6 +363,10 @@ pub contract UmbraEscrow {
         provided_fee_recipient: AztecAddress,
         provided_fee_bps: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Verify order exists
         assert(storage.order_exists.at(escrow_id).read(), "Order does not exist");
 
@@ -381,7 +411,8 @@ pub contract UmbraEscrow {
         // Emit OrderFilled event
         context.emit_public_log(OrderFilled { escrow_id });
 
-        // Token transfers handled in private fill_order function
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     /// Process order cancellation (called from cancel_order)
@@ -395,6 +426,10 @@ pub contract UmbraEscrow {
         provided_sell_token: AztecAddress,
         provided_sell_amount: Field,
     ) {
+        // Reentrancy guard (defense in depth)
+        assert(!storage.reentrancy_guard.read(), "Reentrant call");
+        storage.reentrancy_guard.write(true);
+
         // Verify order exists
         assert(storage.order_exists.at(escrow_id).read(), "Order does not exist");
 
@@ -416,14 +451,16 @@ pub contract UmbraEscrow {
         // Mark order as non-existent (effectively deletes it)
         storage.order_exists.at(escrow_id).write(false);
 
-        // Decrement order count
+        // Decrement order count (with underflow check)
         let current_count = storage.order_count.read();
+        assert(current_count as u64 > 0, "No orders to decrement");
         storage.order_count.write(current_count - 1);
 
         // Emit OrderCancelled event
         context.emit_public_log(OrderCancelled { escrow_id });
 
-        // Token refund handled in private cancel_order function
+        // Release reentrancy guard
+        storage.reentrancy_guard.write(false);
     }
 
     // ==================== PUBLIC VIEW FUNCTIONS ====================
@@ -531,5 +568,29 @@ pub contract UmbraEscrow {
         let admin = storage.admin.read();
         assert(caller.eq(admin), "Only admin can unpause");
         storage.paused.write(false);
+    }
+
+    /// Add a supported token (admin only)
+    #[public]
+    fn add_token(token: AztecAddress) {
+        let caller = context.msg_sender();
+        let admin = storage.admin.read();
+        assert(caller.eq(admin), "Only admin can add token");
+        storage.supported_tokens.at(token.to_field()).write(true);
+    }
+
+    /// Remove a supported token (admin only)
+    #[public]
+    fn remove_token(token: AztecAddress) {
+        let caller = context.msg_sender();
+        let admin = storage.admin.read();
+        assert(caller.eq(admin), "Only admin can remove token");
+        storage.supported_tokens.at(token.to_field()).write(false);
+    }
+
+    /// Check if a token is supported
+    #[public]
+    fn is_token_supported(token: AztecAddress) -> pub bool {
+        storage.supported_tokens.at(token.to_field()).read()
     }
 }

@@ -41,7 +41,7 @@ export async function createOrder(req: Request): Promise<Response> {
     const body = await req.json();
 
     // Validate required fields exist
-    const required = ["escrow_address", "base_token", "quote_token", "side", "order_type", "expires_at"];
+    const required = ["contract_address", "base_token", "quote_token", "side", "order_type", "expires_at"];
     for (const field of required) {
       if (!body[field]) {
         return jsonResponse({ error: `Missing required field: ${field}` }, 400);
@@ -49,8 +49,8 @@ export async function createOrder(req: Request): Promise<Response> {
     }
 
     // Validate field formats
-    if (!isValidAddress(body.escrow_address)) {
-      return jsonResponse({ error: "Invalid escrow_address format" }, 400);
+    if (!isValidAddress(body.contract_address)) {
+      return jsonResponse({ error: "Invalid contract_address format" }, 400);
     }
     if (!isValidAddress(body.base_token)) {
       return jsonResponse({ error: "Invalid base_token format" }, 400);
@@ -86,8 +86,7 @@ export async function createOrder(req: Request): Promise<Response> {
     // Insert order
     statements.insertOrder.run(
       id,
-      body.escrow_address.toLowerCase(),
-      body.pool_address ? body.pool_address.toLowerCase() : null,
+      body.contract_address.toLowerCase(),
       body.base_token.toLowerCase(),
       body.quote_token.toLowerCase(),
       body.side,
@@ -111,7 +110,7 @@ export async function createOrder(req: Request): Promise<Response> {
       success: true,
       data: {
         id,
-        escrow_address: body.escrow_address.toLowerCase(),
+        contract_address: body.contract_address.toLowerCase(),
         status: "ACTIVE",
         created_at: now,
       }

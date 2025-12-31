@@ -1,6 +1,6 @@
 # Umbra Protocol - Production Readiness Assessment
 
-## Current Status: 9/10 (Testnet Ready)
+## Current Status: 10/10 (Testnet Ready)
 
 This document tracks the security fixes and production readiness of Umbra Protocol.
 
@@ -108,6 +108,103 @@ if sell_limit_price > 0 {
 
 For mainnet: Replace SimpleOracle with L1->L2 Chainlink/Pyth bridge.
 
+### 9. Token Flow Bug Fix ✅
+**Status:** Fixed
+**File:** `pool/main.nr`
+
+Match function was incorrectly transferring quote tokens directly from buyer's wallet instead of from pool escrow. Fixed to use `transfer_out_private` for all match transfers:
+- Quote tokens: pool → seller
+- Base tokens: pool → buyer
+- Fees: pool → fee_recipient
+
+### 10. Oracle Staleness Check ✅
+**Status:** Fixed
+**File:** `pool/main.nr`
+
+Added `max_oracle_age_blocks` configuration:
+- Stored in contract state, configurable by admin
+- Validated in `_process_match`: rejects stale oracle prices
+- Set to 0 to disable staleness check
+
+### 11. Reentrancy Guards ✅
+**Status:** Fixed
+**Files:** `pool/main.nr`, `escrow/main.nr`
+
+Added defense-in-depth reentrancy guards to all state-modifying internal functions:
+- `_store_order`
+- `_process_match`
+- `_process_cancel`
+
+Note: Aztec's execution model prevents traditional reentrancy, but guards added for defense in depth.
+
+### 12. Token Whitelist in Escrow ✅
+**Status:** Fixed
+**File:** `escrow/main.nr`
+
+Added token whitelist to Escrow contract (Pool already had pair whitelist):
+- `supported_tokens` storage map
+- `add_token(token)` - admin only
+- `remove_token(token)` - admin only
+- `is_token_supported(token)` - view function
+- Validation in `_store_order`
+
+### 13. Underflow Guards ✅
+**Status:** Fixed
+**Files:** `pool/main.nr`, `escrow/main.nr`
+
+Added underflow protection for `order_count` decrement:
+```noir
+assert(current_count as u64 > 0, "No orders to decrement");
+```
+
+### 14. Market Buy Order Refund ✅
+**Status:** Fixed
+**File:** `pool/main.nr`
+
+Added `order_locked_quote` storage to track actual quote tokens locked:
+- Stored when order is created
+- Reduced on partial fills
+- Used for accurate refunds on cancel
+
+### 15. Nonce Simplification (Solidity-like) ✅
+**Status:** Fixed
+**Files:** `pool/main.nr`, `escrow/main.nr`
+
+Simplified nonce handling to be more like Solidity's approve + transferFrom pattern:
+- **Order submission**: User provides ONE nonce (for initial token lock)
+- **Match/Cancel**: Pool/Escrow generates its own nonces using `random()`
+- Removed `buy_nonce`, `sell_nonce` params from `match_orders`
+- Removed `nonce+1`, `nonce+2` patterns
+
+**Before (complex):**
+```noir
+// User had to approve nonce, nonce+1, nonce+2 before calling fill_order
+```
+
+**After (simple):**
+```noir
+// User approves ONE nonce for their transfer
+// Contract generates nonces for pool-owned transfers
+let escrow_nonce = unsafe { random() };
+```
+
+---
+
+## Why Orders Are Public (Not Private)
+
+Orders are stored in `PublicMutable` storage by design. True private storage would break the dark pool:
+
+| Requirement | Public Storage | Private Notes |
+|-------------|----------------|---------------|
+| **Matcher reads orders** | ✅ Works | ❌ Only owner decrypts |
+| **Partial fills** | ✅ Read same order N times | ❌ Notes consumed on read |
+| **Order discovery** | ✅ Query all orders | ❌ Can't aggregate |
+
+**Privacy comes from:**
+- Oracle-based pricing (no price revelation)
+- Private token transfers (ZK proofs)
+- Off-chain orderflow aggregation
+
 ---
 
 ## Security Features
@@ -120,8 +217,11 @@ For mainnet: Replace SimpleOracle with L1->L2 Chainlink/Pyth bridge.
 | `set_oracle` | Admin only | ✅ |
 | `set_taker_fee` | Admin only | ✅ |
 | `set_maker_fee` | Admin only | ✅ |
+| `set_max_oracle_age` | Admin only | ✅ |
 | `add_pair` | Admin only | ✅ |
 | `remove_pair` | Admin only | ✅ |
+| `add_token` (Escrow) | Admin only | ✅ |
+| `remove_token` (Escrow) | Admin only | ✅ |
 | `pause` | Admin only | ✅ |
 | `unpause` | Admin only | ✅ |
 | `set_price` (Oracle) | Admin only | ✅ |
@@ -166,13 +266,18 @@ This means the "transfer-before-validate" pattern is safe in Aztec's model.
 ## Remaining Considerations
 
 ### For Testnet (Current State)
-- ✅ Contracts compile and pass tests (38 tests passing)
-- ✅ Security vulnerabilities fixed (8 issues addressed)
+- ✅ Contracts compile and pass tests
+- ✅ Security vulnerabilities fixed (15 issues addressed)
 - ✅ Admin controls in place
 - ✅ Fee caps enforced (max 100 bps / 1%)
 - ✅ AIP-20 token standard compliant
 - ✅ Oracle-based dark pool pricing
 - ✅ SimpleOracle contract for testnet
+- ✅ Oracle staleness validation
+- ✅ Reentrancy guards (defense in depth)
+- ✅ Token whitelist in Escrow
+- ✅ Market buy order refund tracking
+- ✅ Solidity-like nonce handling
 - ⚠️ CLI is simulation-only (not real contract interaction yet)
 
 ### For Mainnet (Future Work)
@@ -182,7 +287,7 @@ This means the "transfer-before-validate" pattern is safe in Aztec's model.
 | L1->L2 Oracle Bridge | High | Pending (Chainlink/Pyth) |
 | Token interface verification | High | ✅ AIP-20 Compliant |
 | Integration tests with sandbox | High | Pending |
-| Reentrancy guards | Low | N/A (Aztec model) |
+| Reentrancy guards | Low | ✅ Added (defense in depth) |
 | Order cleanup mechanism | Low | Pending |
 
 ---
@@ -224,6 +329,11 @@ cd packages/cli
 - Fee validation (prevents bypass attacks)
 - Buy order collateral requirement
 - Oracle-based dark pool pricing (SimpleOracle for testnet)
+- Oracle staleness validation
+- Reentrancy guards (defense in depth)
+- Token whitelist (both Pool and Escrow)
+- Correct token flow in match operations
+- Accurate buy order refund tracking
 
 ### Aztec Standards Evaluation
 We evaluated [Aztec Standards](https://github.com/defi-wonderland/aztec-standards) from defi-wonderland:
